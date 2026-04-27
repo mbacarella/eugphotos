@@ -7,6 +7,32 @@ import re
 BIB_PATTERN = re.compile(r"^\d{1,5}$")
 MIN_BIB_CONF = 0.3
 
+OCR_FIXES = str.maketrans({
+    "I": "1", "l": "1", "i": "1",
+    "O": "0", "o": "0",
+    "Z": "2", "z": "2",
+    "S": "5", "s": "5",
+    "B": "8",
+    "G": "6",
+    "T": "7",
+    "'": "", '"': "", " ": "",
+})
+
+
+def normalize_bib(text: str) -> str | None:
+    # Only try normalization if the text already has some digits
+    if not re.search(r"\d", text):
+        return None
+    # Must be short enough to plausibly be a bib
+    if len(text) > 7:
+        return None
+    fixed = text.translate(OCR_FIXES).strip()
+    fixed = re.sub(r"^[^0-9]+", "", fixed)
+    fixed = re.sub(r"[^0-9]+$", "", fixed)
+    if BIB_PATTERN.match(fixed) and len(fixed) >= 2:
+        return fixed
+    return None
+
 
 def main():
     with open("photos.json") as f:
@@ -21,8 +47,16 @@ def main():
         for entry in texts:
             text = entry["text"]
             conf = entry["conf"]
-            if BIB_PATTERN.match(text) and conf >= MIN_BIB_CONF:
+            if conf < MIN_BIB_CONF:
+                continue
+            # Try exact match first
+            if BIB_PATTERN.match(text):
                 bib_to_indices.setdefault(text, []).append(i)
+            else:
+                # Try normalized match
+                fixed = normalize_bib(text)
+                if fixed:
+                    bib_to_indices.setdefault(fixed, []).append(i)
 
     data["bibs"] = bib_to_indices
 
