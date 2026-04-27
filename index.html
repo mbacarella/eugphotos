@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eugene Marathon Photos</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #111;
+  color: #eee;
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+#header h1 {
+  font-size: 1.1em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+#counter {
+  color: #888;
+  font-size: 0.85em;
+}
+
+#grid {
+  display: grid;
+  gap: 3px;
+  padding: 3px;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+@media (min-width: 480px) {
+  #grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (min-width: 768px) {
+  #grid { grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 4px; }
+}
+
+@media (min-width: 1024px) {
+  #grid { grid-template-columns: repeat(5, 1fr); }
+}
+
+@media (min-width: 1400px) {
+  #grid { grid-template-columns: repeat(7, 1fr); }
+}
+
+@media (min-width: 1900px) {
+  #grid { grid-template-columns: repeat(9, 1fr); }
+}
+
+.photo {
+  aspect-ratio: 1;
+  background-color: #222;
+  background-size: cover;
+  background-position: center;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .photo:hover { opacity: 0.8; }
+}
+
+#lightbox {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0,0,0,0.95);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  touch-action: pan-y;
+}
+
+#lightbox.open {
+  display: flex;
+}
+
+#lightbox img {
+  max-width: 95vw;
+  max-height: calc(100vh - 60px);
+  max-height: calc(100dvh - 60px);
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+#lightbox .nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 2.5em;
+  color: #fff;
+  cursor: pointer;
+  padding: 20px;
+  user-select: none;
+  opacity: 0.7;
+  z-index: 210;
+}
+
+#lightbox .prev { left: 0; }
+#lightbox .next { right: 0; }
+
+@media (hover: hover) {
+  #lightbox .nav { opacity: 0.5; }
+  #lightbox .nav:hover { opacity: 1; }
+}
+
+@media (max-width: 600px) {
+  #lightbox .nav {
+    font-size: 2em;
+    padding: 16px 10px;
+  }
+}
+
+#lightbox .close {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-size: 2em;
+  color: #fff;
+  cursor: pointer;
+  opacity: 0.7;
+  z-index: 210;
+  padding: 8px;
+}
+
+@media (hover: hover) {
+  #lightbox .close { opacity: 0.5; }
+  #lightbox .close:hover { opacity: 1; }
+}
+
+#lightbox .idx {
+  position: absolute;
+  bottom: 12px;
+  color: #888;
+  font-size: 0.85em;
+}
+
+#sentinel {
+  height: 1px;
+}
+
+#loading {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+  font-size: 1.1em;
+}
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1>Eugene Marathon Photos</h1>
+  <span id="counter"></span>
+</div>
+
+<div id="grid"></div>
+<div id="sentinel"></div>
+<div id="loading">Loading photo index...</div>
+
+<div id="lightbox">
+  <span class="close">&times;</span>
+  <span class="nav prev">&#8249;</span>
+  <img src="" alt="">
+  <span class="nav next">&#8250;</span>
+  <span class="idx"></span>
+</div>
+
+<script>
+(function() {
+  var BATCH = 100;
+  var hashes = [];
+  var s3Prefix = "";
+  var rendered = 0;
+  var lightboxIdx = -1;
+
+  var grid = document.getElementById("grid");
+  var counter = document.getElementById("counter");
+  var loading = document.getElementById("loading");
+  var sentinel = document.getElementById("sentinel");
+  var lightbox = document.getElementById("lightbox");
+  var lightboxImg = lightbox.querySelector("img");
+  var lightboxIdxLabel = lightbox.querySelector(".idx");
+
+  function thumbUrl(hash) { return s3Prefix + hash + "_thumb.jpg"; }
+  function midUrl(hash) { return s3Prefix + hash + "_mid.jpg"; }
+
+  function renderBatch() {
+    if (rendered >= hashes.length) return;
+    var end = Math.min(rendered + BATCH, hashes.length);
+    var fragment = document.createDocumentFragment();
+    for (var i = rendered; i < end; i++) {
+      var div = document.createElement("div");
+      div.className = "photo";
+      div.dataset.idx = i;
+      fragment.appendChild(div);
+    }
+    grid.appendChild(fragment);
+
+    for (var i = rendered; i < end; i++) {
+      imgObserver.observe(grid.children[i]);
+    }
+
+    rendered = end;
+    if (rendered >= hashes.length) {
+      counter.textContent = "all " + hashes.length.toLocaleString() + " photos";
+      loading.textContent = "";
+    } else {
+      counter.textContent = "browsing around photo " + rendered.toLocaleString() + " of " + hashes.length.toLocaleString();
+    }
+  }
+
+  var imgObserver = new IntersectionObserver(function(entries) {
+    for (var j = 0; j < entries.length; j++) {
+      if (entries[j].isIntersecting) {
+        var div = entries[j].target;
+        var idx = parseInt(div.dataset.idx);
+        div.style.backgroundImage = "url('" + thumbUrl(hashes[idx]) + "')";
+        imgObserver.unobserve(div);
+      }
+    }
+  }, { rootMargin: "400px" });
+
+  var scrollObserver = new IntersectionObserver(function(entries) {
+    if (entries[0].isIntersecting && rendered < hashes.length) {
+      renderBatch();
+    }
+  }, { rootMargin: "800px" });
+
+  scrollObserver.observe(sentinel);
+
+  // Lightbox
+  grid.addEventListener("click", function(e) {
+    var photo = e.target.closest(".photo");
+    if (!photo) return;
+    lightboxIdx = parseInt(photo.dataset.idx);
+    showLightbox();
+  });
+
+  function showLightbox() {
+    lightboxImg.src = midUrl(hashes[lightboxIdx]);
+    lightboxIdxLabel.textContent = (lightboxIdx + 1) + " / " + hashes.length.toLocaleString();
+    lightbox.classList.add("open");
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeLightbox() {
+    lightbox.classList.remove("open");
+    lightboxImg.src = "";
+    lightboxIdx = -1;
+    document.body.style.overflow = "";
+  }
+
+  function prevPhoto() {
+    if (lightboxIdx > 0) { lightboxIdx--; showLightbox(); }
+  }
+
+  function nextPhoto() {
+    if (lightboxIdx < hashes.length - 1) { lightboxIdx++; showLightbox(); }
+  }
+
+  lightbox.querySelector(".close").addEventListener("click", closeLightbox);
+  lightbox.addEventListener("click", function(e) {
+    if (e.target === lightbox) closeLightbox();
+  });
+  lightbox.querySelector(".prev").addEventListener("click", function(e) {
+    e.stopPropagation();
+    prevPhoto();
+  });
+  lightbox.querySelector(".next").addEventListener("click", function(e) {
+    e.stopPropagation();
+    nextPhoto();
+  });
+
+  document.addEventListener("keydown", function(e) {
+    if (lightboxIdx < 0) return;
+    if (e.key === "Escape") closeLightbox();
+    if (e.key === "ArrowLeft") prevPhoto();
+    if (e.key === "ArrowRight") nextPhoto();
+  });
+
+  // Swipe support for lightbox
+  var touchStartX = 0;
+  var touchStartY = 0;
+  lightbox.addEventListener("touchstart", function(e) {
+    touchStartX = e.changedTouches[0].clientX;
+    touchStartY = e.changedTouches[0].clientY;
+  }, { passive: true });
+
+  lightbox.addEventListener("touchend", function(e) {
+    var dx = e.changedTouches[0].clientX - touchStartX;
+    var dy = e.changedTouches[0].clientY - touchStartY;
+    if (Math.abs(dx) < 40 || Math.abs(dy) > Math.abs(dx)) return;
+    if (dx < 0) nextPhoto();
+    else prevPhoto();
+  }, { passive: true });
+
+  // Load data
+  fetch("photos.json")
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      hashes = data.hashes;
+      s3Prefix = data.s3_prefix;
+      loading.textContent = "";
+      document.querySelector("#header h1").textContent =
+        "Eugene Marathon Photos (" + hashes.length.toLocaleString() + ")";
+      renderBatch();
+    })
+    .catch(function(err) {
+      loading.textContent = "Failed to load photos.json: " + err.message;
+    });
+})();
+</script>
+</body>
+</html>
