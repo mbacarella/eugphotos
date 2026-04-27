@@ -30,12 +30,21 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 #header h1 {
   font-size: 1.1em;
   font-weight: 600;
   white-space: nowrap;
+}
+
+#controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
 }
 
 #scrubber {
@@ -292,14 +301,16 @@ body {
 
 <div id="header">
   <h1>Eugene Marathon Photos</h1>
-  <div id="scrubber">
-    <input type="range" min="0" max="0" value="0" id="slider">
-    <span class="pos" id="slider-pos"></span>
-  </div>
-  <div id="search">
-    <input type="text" placeholder="Bib #" id="bib-input" inputmode="numeric">
-    <button id="bib-go">Search</button>
-    <button class="clear" id="bib-clear">&times;</button>
+  <div id="controls">
+    <div id="scrubber">
+      <input type="range" min="0" max="0" value="0" id="slider">
+      <span class="pos" id="slider-pos"></span>
+    </div>
+    <div id="search">
+      <input type="text" placeholder="Bib #" id="bib-input" inputmode="numeric">
+      <button id="bib-go">Search</button>
+      <button class="clear" id="bib-clear">&times;</button>
+    </div>
   </div>
 </div>
 
