@@ -257,8 +257,12 @@ body {
   });
 
   function showLightbox() {
+    var wasOpen = lightboxIdx >= 0 && lightbox.classList.contains("open");
     lightboxImg.src = midUrl(hashes[lightboxIdx]);
     lightboxIdxLabel.textContent = (lightboxIdx + 1) + " / " + hashes.length.toLocaleString();
+    if (!wasOpen) {
+      history.pushState({ lightbox: true }, "");
+    }
     lightbox.classList.add("open");
     document.body.style.overflow = "hidden";
   }
@@ -270,6 +274,12 @@ body {
     document.body.style.overflow = "";
   }
 
+  window.addEventListener("popstate", function() {
+    if (lightboxIdx >= 0) {
+      closeLightbox();
+    }
+  });
+
   function prevPhoto() {
     if (lightboxIdx > 0) { lightboxIdx--; showLightbox(); }
   }
@@ -278,9 +288,13 @@ body {
     if (lightboxIdx < hashes.length - 1) { lightboxIdx++; showLightbox(); }
   }
 
-  lightbox.querySelector(".close").addEventListener("click", closeLightbox);
+  function dismissLightbox() {
+    if (lightboxIdx >= 0) history.back();
+  }
+
+  lightbox.querySelector(".close").addEventListener("click", dismissLightbox);
   lightbox.addEventListener("click", function(e) {
-    if (e.target === lightbox) closeLightbox();
+    if (e.target === lightbox) dismissLightbox();
   });
   lightbox.querySelector(".prev").addEventListener("click", function(e) {
     e.stopPropagation();
@@ -293,7 +307,7 @@ body {
 
   document.addEventListener("keydown", function(e) {
     if (lightboxIdx < 0) return;
-    if (e.key === "Escape") closeLightbox();
+    if (e.key === "Escape") dismissLightbox();
     if (e.key === "ArrowLeft") prevPhoto();
     if (e.key === "ArrowRight") nextPhoto();
   });
