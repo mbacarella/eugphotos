@@ -24,7 +24,7 @@ body {
   z-index: 100;
   background: #1a1a1a;
   border-bottom: 1px solid #333;
-  padding: 12px 16px;
+  padding: 10px 16px;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -37,9 +37,26 @@ body {
   white-space: nowrap;
 }
 
-#counter {
+#scrubber {
+  flex: 1;
+  min-width: 120px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#scrubber input[type="range"] {
+  flex: 1;
+  height: 20px;
+  cursor: pointer;
+  accent-color: #888;
+}
+
+#scrubber .pos {
   color: #888;
-  font-size: 0.85em;
+  font-size: 0.8em;
+  white-space: nowrap;
+  min-width: 5em;
 }
 
 #grid {
@@ -181,7 +198,10 @@ body {
 
 <div id="header">
   <h1>Eugene Marathon Photos</h1>
-  <span id="counter"></span>
+  <div id="scrubber">
+    <input type="range" min="0" max="0" value="0" id="slider">
+    <span class="pos" id="slider-pos"></span>
+  </div>
 </div>
 
 <div id="grid"></div>
@@ -205,19 +225,26 @@ body {
   var lightboxIdx = -1;
 
   var grid = document.getElementById("grid");
-  var counter = document.getElementById("counter");
   var loading = document.getElementById("loading");
   var sentinel = document.getElementById("sentinel");
   var lightbox = document.getElementById("lightbox");
   var lightboxImg = lightbox.querySelector("img");
   var lightboxIdxLabel = lightbox.querySelector(".idx");
+  var slider = document.getElementById("slider");
+  var sliderPos = document.getElementById("slider-pos");
+  var scrubbing = false;
 
   function thumbUrl(hash) { return s3Prefix + hash + "_thumb.jpg"; }
   function midUrl(hash) { return s3Prefix + hash + "_mid.jpg"; }
 
   function renderBatch() {
+    renderUpTo(rendered + BATCH);
+  }
+
+  function renderUpTo(target) {
     if (rendered >= hashes.length) return;
-    var end = Math.min(rendered + BATCH, hashes.length);
+    var end = Math.min(target, hashes.length);
+    if (end <= rendered) return;
     var fragment = document.createDocumentFragment();
     for (var i = rendered; i < end; i++) {
       var a = document.createElement("a");
@@ -237,12 +264,28 @@ body {
 
     rendered = end;
     if (rendered >= hashes.length) {
-      counter.textContent = "all " + hashes.length.toLocaleString() + " photos";
       loading.textContent = "";
-    } else {
-      counter.textContent = "browsing around photo " + rendered.toLocaleString() + " of " + hashes.length.toLocaleString();
     }
   }
+
+  function updateSliderLabel(idx) {
+    sliderPos.textContent = (idx + 1).toLocaleString() + " / " + hashes.length.toLocaleString();
+  }
+
+  var scrubTimer = null;
+
+  slider.addEventListener("input", function() {
+    scrubbing = true;
+    var idx = parseInt(slider.value);
+    updateSliderLabel(idx);
+    clearTimeout(scrubTimer);
+    scrubTimer = setTimeout(function() {
+      renderUpTo(idx + BATCH);
+      var el = grid.children[idx];
+      if (el) el.scrollIntoView({ behavior: "auto", block: "center" });
+      scrubbing = false;
+    }, 150);
+  });
 
   var imgObserver = new IntersectionObserver(function(entries) {
     for (var j = 0; j < entries.length; j++) {
@@ -262,6 +305,26 @@ body {
   }, { rootMargin: "800px" });
 
   scrollObserver.observe(sentinel);
+
+  var scrollTick = false;
+  window.addEventListener("scroll", function() {
+    if (scrubbing || !hashes.length || scrollTick) return;
+    scrollTick = true;
+    requestAnimationFrame(function() {
+      scrollTick = false;
+      var headerH = document.getElementById("header").offsetHeight;
+      var children = grid.children;
+      if (!children.length) return;
+      var lo = 0, hi = children.length - 1;
+      while (lo < hi) {
+        var mid = (lo + hi) >>> 1;
+        if (children[mid].getBoundingClientRect().bottom < headerH) lo = mid + 1;
+        else hi = mid;
+      }
+      slider.value = lo;
+      updateSliderLabel(lo);
+    });
+  }, { passive: true });
 
   // Lightbox
   grid.addEventListener("click", function(e) {
@@ -352,7 +415,9 @@ body {
       s3Prefix = data.s3_prefix;
       loading.textContent = "";
       document.querySelector("#header h1").textContent =
-        "Eugene Marathon & Half Marathon Photos";
+        "Eugene Marathon & Half Marathon Photos (" + hashes.length.toLocaleString() + ")";
+      slider.max = hashes.length - 1;
+      updateSliderLabel(0);
       renderBatch();
     })
     .catch(function(err) {
