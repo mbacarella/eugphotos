@@ -3,7 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Eugene Marathon Photos</title>
+<meta property="og:title" content="2026 Eugene Marathon & Half Marathon Photos">
+<meta property="og:description" content="A smoother infinite-scrolling interface to all 29,419 race day photos from the 2026 Eugene Marathon & Half Marathon.">
+<meta property="og:type" content="website">
+<meta name="description" content="A smoother infinite-scrolling interface to all 29,419 race day photos from the 2026 Eugene Marathon & Half Marathon.">
+<title>2026 Eugene Marathon & Half Marathon Photos</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -68,9 +72,16 @@ body {
 .photo {
   aspect-ratio: 1;
   background-color: #222;
-  background-size: cover;
-  background-position: center;
   cursor: pointer;
+  display: block;
+  overflow: hidden;
+}
+
+.photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 @media (hover: hover) {
@@ -209,10 +220,14 @@ body {
     var end = Math.min(rendered + BATCH, hashes.length);
     var fragment = document.createDocumentFragment();
     for (var i = rendered; i < end; i++) {
-      var div = document.createElement("div");
-      div.className = "photo";
-      div.dataset.idx = i;
-      fragment.appendChild(div);
+      var a = document.createElement("a");
+      a.className = "photo";
+      a.href = midUrl(hashes[i]);
+      a.dataset.idx = i;
+      var img = document.createElement("img");
+      img.alt = "Photo " + (i + 1);
+      a.appendChild(img);
+      fragment.appendChild(a);
     }
     grid.appendChild(fragment);
 
@@ -232,10 +247,10 @@ body {
   var imgObserver = new IntersectionObserver(function(entries) {
     for (var j = 0; j < entries.length; j++) {
       if (entries[j].isIntersecting) {
-        var div = entries[j].target;
-        var idx = parseInt(div.dataset.idx);
-        div.style.backgroundImage = "url('" + thumbUrl(hashes[idx]) + "')";
-        imgObserver.unobserve(div);
+        var el = entries[j].target;
+        var idx = parseInt(el.dataset.idx);
+        el.querySelector("img").src = thumbUrl(hashes[idx]);
+        imgObserver.unobserve(el);
       }
     }
   }, { rootMargin: "400px" });
@@ -252,6 +267,7 @@ body {
   grid.addEventListener("click", function(e) {
     var photo = e.target.closest(".photo");
     if (!photo) return;
+    e.preventDefault();
     lightboxIdx = parseInt(photo.dataset.idx);
     showLightbox();
   });
@@ -336,7 +352,7 @@ body {
       s3Prefix = data.s3_prefix;
       loading.textContent = "";
       document.querySelector("#header h1").textContent =
-        "Eugene Marathon Photos (" + hashes.length.toLocaleString() + ")";
+        "Eugene Marathon & Half Marathon Photos (" + hashes.length.toLocaleString() + ")";
       renderBatch();
     })
     .catch(function(err) {
