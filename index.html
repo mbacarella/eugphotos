@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<link rel="icon" href="data:,">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta property="og:title" content="2026 Eugene Marathon & Half Marathon Photos">
 <meta property="og:description" content="A smoother infinite-scrolling interface to all 29,419 race day photos from the 2026 Eugene Marathon & Half Marathon.">
@@ -28,7 +30,6 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
 }
 
 #header h1 {
@@ -38,11 +39,12 @@ body {
 }
 
 #scrubber {
-  flex: 1;
-  min-width: 120px;
+  flex: 1 1 0;
+  min-width: 80px;
   display: flex;
   align-items: center;
   gap: 8px;
+  overflow: hidden;
 }
 
 #scrubber input[type="range"] {
@@ -58,6 +60,49 @@ body {
   white-space: nowrap;
   min-width: 5em;
 }
+
+#search {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#search input {
+  width: 7em;
+  padding: 4px 8px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: #222;
+  color: #eee;
+  font-size: 0.9em;
+}
+
+#search input::placeholder { color: #666; }
+
+#search button {
+  padding: 4px 10px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: #333;
+  color: #eee;
+  cursor: pointer;
+  font-size: 0.85em;
+}
+
+#search button:hover { background: #444; }
+
+#search .clear {
+  display: none;
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 1.2em;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+#search .clear:hover { color: #eee; }
 
 #grid {
   display: grid;
@@ -92,6 +137,7 @@ body {
   cursor: pointer;
   display: block;
   overflow: hidden;
+  position: relative;
 }
 
 .photo img {
@@ -101,8 +147,31 @@ body {
   display: block;
 }
 
+.photo.context {
+  opacity: 0.45;
+}
+
+.photo.context:hover {
+  opacity: 0.7;
+}
+
+.photo.match::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 3px solid #4ecdc4;
+  pointer-events: none;
+}
+
+.cluster-divider {
+  grid-column: 1 / -1;
+  height: 2px;
+  background: #333;
+  margin: 8px 0;
+}
+
 @media (hover: hover) {
-  .photo:hover { opacity: 0.8; }
+  .photo:not(.context):hover { opacity: 0.8; }
 }
 
 #lightbox {
@@ -192,6 +261,31 @@ body {
   color: #666;
   font-size: 1.1em;
 }
+
+#filter-info {
+  text-align: center;
+  padding: 12px;
+  color: #aaa;
+  font-size: 0.9em;
+  display: none;
+}
+
+#filter-info span {
+  color: #4ecdc4;
+}
+
+#filter-info button {
+  margin-left: 12px;
+  padding: 4px 14px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: #333;
+  color: #eee;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+#filter-info button:hover { background: #444; }
 </style>
 </head>
 <body>
@@ -202,8 +296,14 @@ body {
     <input type="range" min="0" max="0" value="0" id="slider">
     <span class="pos" id="slider-pos"></span>
   </div>
+  <div id="search">
+    <input type="text" placeholder="Bib #" id="bib-input" inputmode="numeric">
+    <button id="bib-go">Search</button>
+    <button class="clear" id="bib-clear">&times;</button>
+  </div>
 </div>
 
+<div id="filter-info"><span id="filter-msg"></span><button id="filter-clear">Show all photos</button></div>
 <div id="grid"></div>
 <div id="sentinel"></div>
 <div id="loading">Loading photo index...</div>
@@ -219,10 +319,19 @@ body {
 <script>
 (function() {
   var BATCH = 100;
+  var CONTEXT = 2;
   var hashes = [];
+  var bibs = {};
   var s3Prefix = "";
   var rendered = 0;
   var lightboxIdx = -1;
+
+  // In filtered mode, viewIndices is the list of global indices shown in the grid.
+  // Each element maps grid position -> hashes[] index.
+  // null when showing all photos.
+  var viewIndices = null;
+  var matchSet = null; // Set of global indices that are actual matches (not context)
+  var clusterMap = null; // gi -> cluster ID (precomputed when filtering)
 
   var grid = document.getElementById("grid");
   var loading = document.getElementById("loading");
@@ -233,43 +342,123 @@ body {
   var slider = document.getElementById("slider");
   var sliderPos = document.getElementById("slider-pos");
   var scrubbing = false;
+  var bibInput = document.getElementById("bib-input");
+  var bibGo = document.getElementById("bib-go");
+  var bibClear = document.getElementById("bib-clear");
+  var filterInfo = document.getElementById("filter-info");
+  var filterMsg = document.getElementById("filter-msg");
+  var filterClearBtn = document.getElementById("filter-clear");
 
   function thumbUrl(hash) { return s3Prefix + hash + "_thumb.jpg"; }
   function midUrl(hash) { return s3Prefix + hash + "_mid.jpg"; }
+
+  function totalVisible() {
+    return viewIndices ? viewIndices.length : hashes.length;
+  }
+
+  function globalIdx(gridPos) {
+    return viewIndices ? viewIndices[gridPos] : gridPos;
+  }
+
+  // --- Rendering ---
+
+  function clearGrid() {
+    grid.innerHTML = "";
+    rendered = 0;
+  }
 
   function renderBatch() {
     renderUpTo(rendered + BATCH);
   }
 
   function renderUpTo(target) {
-    if (rendered >= hashes.length) return;
-    var end = Math.min(target, hashes.length);
+    var total = totalVisible();
+    if (rendered >= total) return;
+    var end = Math.min(target, total);
     if (end <= rendered) return;
     var fragment = document.createDocumentFragment();
+
+    var prevCluster = -1;
+    if (rendered > 0 && clusterMap) {
+      prevCluster = clusterMap[viewIndices[rendered - 1]];
+    }
+
     for (var i = rendered; i < end; i++) {
+      var gi = globalIdx(i);
+
+      if (clusterMap) {
+        var cluster = clusterMap[gi];
+        if (prevCluster >= 0 && cluster !== prevCluster) {
+          var div = document.createElement("div");
+          div.className = "cluster-divider";
+          fragment.appendChild(div);
+        }
+        prevCluster = cluster;
+      }
+
       var a = document.createElement("a");
       a.className = "photo";
-      a.href = midUrl(hashes[i]);
-      a.dataset.idx = i;
+      a.href = midUrl(hashes[gi]);
+      a.dataset.gridPos = i;
+      a.dataset.gi = gi;
+
+      if (matchSet && !matchSet.has(gi)) {
+        a.classList.add("context");
+      } else if (matchSet) {
+        a.classList.add("match");
+      }
+
       var img = document.createElement("img");
-      img.alt = "Photo " + (i + 1);
+      img.alt = "Photo " + (gi + 1);
       a.appendChild(img);
       fragment.appendChild(a);
     }
     grid.appendChild(fragment);
 
-    for (var i = rendered; i < end; i++) {
-      imgObserver.observe(grid.children[i]);
+    var photos = grid.querySelectorAll(".photo");
+    for (var i = 0; i < photos.length; i++) {
+      if (!photos[i].querySelector("img").src || photos[i].querySelector("img").src === location.href) {
+        imgObserver.observe(photos[i]);
+      }
     }
 
     rendered = end;
-    if (rendered >= hashes.length) {
+    if (rendered >= total) {
       loading.textContent = "";
     }
   }
 
+  function buildClusterMap(indices) {
+    // Merge overlapping context windows into clusters
+    var sorted = indices.slice().sort(function(a, b) { return a - b; });
+    clusterMap = {};
+    var clusterId = 0;
+    var clusterEnd = -Infinity;
+
+    for (var i = 0; i < sorted.length; i++) {
+      var lo = sorted[i] - CONTEXT;
+      var hi = sorted[i] + CONTEXT;
+      if (lo > clusterEnd + 1) {
+        clusterId++;
+      }
+      clusterEnd = Math.max(clusterEnd, hi);
+      for (var gi = Math.max(0, lo); gi <= Math.min(hashes.length - 1, hi); gi++) {
+        clusterMap[gi] = clusterId;
+      }
+    }
+  }
+
+  // --- Scrubber ---
+
   function updateSliderLabel(idx) {
-    sliderPos.textContent = (idx + 1).toLocaleString() + " / " + hashes.length.toLocaleString();
+    var gi = globalIdx(Math.min(idx, totalVisible() - 1));
+    sliderPos.textContent = (gi + 1).toLocaleString() + " / " + hashes.length.toLocaleString();
+  }
+
+  function updateSliderRange() {
+    slider.max = Math.max(0, totalVisible() - 1);
+    slider.value = 0;
+    updateSliderLabel(0);
   }
 
   var scrubTimer = null;
@@ -281,8 +470,14 @@ body {
     clearTimeout(scrubTimer);
     scrubTimer = setTimeout(function() {
       renderUpTo(idx + BATCH);
-      var el = grid.children[idx];
-      if (el) el.scrollIntoView({ behavior: "auto", block: "center" });
+      var photos = grid.querySelectorAll(".photo");
+      // Find the photo element at grid position idx
+      for (var i = 0; i < photos.length; i++) {
+        if (parseInt(photos[i].dataset.gridPos) === idx) {
+          photos[i].scrollIntoView({ behavior: "auto", block: "center" });
+          break;
+        }
+      }
       scrubbing = false;
       slider.blur();
     }, 150);
@@ -295,19 +490,21 @@ body {
     }
   });
 
+  // --- Observers ---
+
   var imgObserver = new IntersectionObserver(function(entries) {
     for (var j = 0; j < entries.length; j++) {
       if (entries[j].isIntersecting) {
         var el = entries[j].target;
-        var idx = parseInt(el.dataset.idx);
-        el.querySelector("img").src = thumbUrl(hashes[idx]);
+        var gi = parseInt(el.dataset.gi);
+        el.querySelector("img").src = thumbUrl(hashes[gi]);
         imgObserver.unobserve(el);
       }
     }
   }, { rootMargin: "400px" });
 
   var scrollObserver = new IntersectionObserver(function(entries) {
-    if (entries[0].isIntersecting && rendered < hashes.length) {
+    if (entries[0].isIntersecting && rendered < totalVisible()) {
       renderBatch();
     }
   }, { rootMargin: "800px" });
@@ -321,32 +518,40 @@ body {
     requestAnimationFrame(function() {
       scrollTick = false;
       var headerH = document.getElementById("header").offsetHeight;
-      var children = grid.children;
-      if (!children.length) return;
-      var lo = 0, hi = children.length - 1;
+      var photos = grid.querySelectorAll(".photo");
+      if (!photos.length) return;
+      var lo = 0, hi = photos.length - 1;
       while (lo < hi) {
         var mid = (lo + hi) >>> 1;
-        if (children[mid].getBoundingClientRect().bottom < headerH) lo = mid + 1;
+        if (photos[mid].getBoundingClientRect().bottom < headerH) lo = mid + 1;
         else hi = mid;
       }
-      slider.value = lo;
-      updateSliderLabel(lo);
+      var gridPos = parseInt(photos[lo].dataset.gridPos);
+      slider.value = gridPos;
+      updateSliderLabel(gridPos);
     });
   }, { passive: true });
 
-  // Lightbox
+  // --- Lightbox ---
+
+  // In filtered mode, lightbox navigates all hashes (not just filtered),
+  // so you can arrow through neighbors even past the displayed context.
   grid.addEventListener("click", function(e) {
     var photo = e.target.closest(".photo");
     if (!photo) return;
     e.preventDefault();
-    lightboxIdx = parseInt(photo.dataset.idx);
+    lightboxIdx = parseInt(photo.dataset.gi);
     showLightbox();
   });
 
   function showLightbox() {
     var wasOpen = lightboxIdx >= 0 && lightbox.classList.contains("open");
     lightboxImg.src = midUrl(hashes[lightboxIdx]);
-    lightboxIdxLabel.textContent = (lightboxIdx + 1) + " / " + hashes.length.toLocaleString();
+    var label = (lightboxIdx + 1).toLocaleString() + " / " + hashes.length.toLocaleString();
+    if (matchSet && matchSet.has(lightboxIdx)) {
+      label += " (match)";
+    }
+    lightboxIdxLabel.textContent = label;
     if (!wasOpen) {
       history.pushState({ lightbox: true }, "");
     }
@@ -415,18 +620,105 @@ body {
     else prevPhoto();
   }, { passive: true });
 
-  // Load data
-  fetch("photos.json")
+  // --- Bib search ---
+
+  function searchBib(bib, skipUrl) {
+    bib = bib.trim();
+    if (!bib) { clearSearch(); return; }
+    bibInput.value = bib;
+    if (!skipUrl) {
+      var url = new URL(location);
+      url.searchParams.set("bib", bib);
+      history.replaceState(null, "", url);
+    }
+
+    var indices = bibs[bib];
+    if (!indices || indices.length === 0) {
+      filterMsg.innerHTML = "No photos found for bib <span>#" + bib + "</span>. Bib detection is based on computer vision and may miss some photos.";
+      filterInfo.style.display = "block";
+      clearGrid();
+      viewIndices = [];
+      matchSet = new Set();
+      updateSliderRange();
+      return;
+    }
+
+    matchSet = new Set(indices);
+    buildClusterMap(indices);
+
+    // Build view: for each match, include CONTEXT neighbors on each side
+    var allIndices = new Set();
+    for (var i = 0; i < indices.length; i++) {
+      for (var d = -CONTEXT; d <= CONTEXT; d++) {
+        var ni = indices[i] + d;
+        if (ni >= 0 && ni < hashes.length) {
+          allIndices.add(ni);
+        }
+      }
+    }
+    viewIndices = Array.from(allIndices).sort(function(a, b) { return a - b; });
+
+    filterMsg.innerHTML = "<span>" + indices.length + "</span> photo" +
+      (indices.length === 1 ? "" : "s") + " found for bib <span>#" + bib + "</span>" +
+      " (showing nearby photos too). Bib detection is based on computer vision and may not be 100% accurate.";
+    filterInfo.style.display = "block";
+    bibClear.style.display = "inline";
+
+    clearGrid();
+    updateSliderRange();
+    window.scrollTo(0, 0);
+    renderUpTo(viewIndices.length); // show all matches at once
+  }
+
+  function clearSearch() {
+    viewIndices = null;
+    matchSet = null;
+    clusterMap = null;
+    filterInfo.style.display = "none";
+    bibClear.style.display = "none";
+    bibInput.value = "";
+    var url = new URL(location);
+    url.searchParams.delete("bib");
+    history.replaceState(null, "", url);
+
+    clearGrid();
+    updateSliderRange();
+    window.scrollTo(0, 0);
+    renderBatch();
+  }
+
+  bibGo.addEventListener("click", function() { searchBib(bibInput.value); });
+  filterClearBtn.addEventListener("click", clearSearch);
+  bibInput.addEventListener("keydown", function(e) {
+    if (e.key === "Enter") searchBib(bibInput.value);
+  });
+  bibClear.addEventListener("click", clearSearch);
+
+  // --- Load data ---
+
+  fetch("photos.json", { cache: "no-cache" })
     .then(function(r) { return r.json(); })
     .then(function(data) {
       hashes = data.hashes;
       s3Prefix = data.s3_prefix;
+      bibs = data.bibs || {};
       loading.textContent = "";
       document.querySelector("#header h1").textContent =
         "Eugene Marathon & Half Marathon Photos";
-      slider.max = hashes.length - 1;
-      updateSliderLabel(0);
-      renderBatch();
+
+      var hasBibs = Object.keys(bibs).length > 0;
+      if (!hasBibs) {
+        document.getElementById("search").style.display = "none";
+      }
+
+      updateSliderRange();
+
+      var urlBib = new URLSearchParams(location.search).get("bib");
+      if (urlBib && bibs[urlBib]) {
+        searchBib(urlBib, true);
+      } else {
+        renderBatch();
+      }
     })
     .catch(function(err) {
       loading.textContent = "Failed to load photos.json: " + err.message;
