@@ -547,11 +547,14 @@ body {
 
   // In filtered mode, lightbox navigates all hashes (not just filtered),
   // so you can arrow through neighbors even past the displayed context.
+  var lastClickedGi = 0;
+
   grid.addEventListener("click", function(e) {
     var photo = e.target.closest(".photo");
     if (!photo) return;
     e.preventDefault();
     lightboxIdx = parseInt(photo.dataset.gi);
+    lastClickedGi = lightboxIdx;
     showLightbox();
   });
 
@@ -694,8 +697,19 @@ body {
 
     clearGrid();
     updateSliderRange();
-    window.scrollTo(0, 0);
-    renderBatch();
+
+    if (lastClickedGi > 0) {
+      renderUpTo(lastClickedGi + BATCH);
+      slider.value = lastClickedGi;
+      updateSliderLabel(lastClickedGi);
+      var el = grid.children[lastClickedGi];
+      if (el) {
+        el.scrollIntoView({ behavior: "auto", block: "center" });
+      }
+    } else {
+      window.scrollTo(0, 0);
+      renderBatch();
+    }
   }
 
   bibGo.addEventListener("click", function() { searchBib(bibInput.value); });
